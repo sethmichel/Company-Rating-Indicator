@@ -1,337 +1,439 @@
-import pandas as pd
-import os
-import datetime
-import sql_handling
-import yfinance as yf
+import datetime as dt
+import sql_handler
+import yfinance as yf   # get api data
+import pandas as pd     # yfinance returns as panda df
+
+
+# if yfinance is called intraday, it'll return a close price of the current price - which is wrong
+# this makes sure yfinance will only be called at least 20 min after market close (most quotes are 20 min delayed)
+# gets time as utc timezone (+7 hrs vs pst time)
+def get_system_time():
+    time = dt.datetime.utcnow().strftime("%H:%M:%S").split(":")  # # 13:25:35 as str's
+    for i in range(0, 3):
+        time[i] = int(time[i])
+    
+    return time   # [13, 25, 35 ] as ints
+
+# calls yfinance to get all missing close_prices
+# pm: date = '2020-5-8', dateend = day after date. history needs an exclusive end
+def get_close_prices(ticker, date, dateend):
+    # utc market times: open 13:30 - 20, closed from 20 - 13:30
+    time = get_system_time()   # [13, 25, 35 ] as ints
+    command = True
+
+    # have to convert date to dt obj, if it's not today, then I don't care about market open times
+    # I'll call this for past days, and future days, but I have other checks to prevent going beyond today and breaking
+    date = date.split('-')
+    date = dt.date(int(date[0]), int(date[1]), int(date[2]))
+    today = dt.date.today()
+    if (date == today):
+        command = False
+
+    # if it's past day then do it, if it's today then check times, it can't be past today
+    # if it's after market close OR (before market open) OR it's at least 20 min after market close
+    if (command == True or (time[0] > 20 or (time[0] < 13 and time[1] < 30) or (time[0] == 20 and time[1] > 20))):
+        return str(yf.Ticker(ticker).history(start = date, end = dateend)["Close"][0])
+    else:
+        return None
 
 
 # called from kivy init
-# uses datetime to get the trading days of last week and this week. excluding weekends
-# so if today's fri, it's the last day of the list, then on mon the list updates to next week
+# uses datetime to get the trading days of either this week or last week in form 2020-05-09
+# note: this actually gets last 11 trading days, because the api needs tomorrows date to get todays date, so index 10 is just a pm for that
 def get_trading_days():
     trading_days = []
 
     # I need the date of this week's monday, then I make the list starting last week
-    x = datetime.date.today()
-    monday = x - datetime.timedelta(7 - (7 - x.weekday()))
-    add_date = monday - datetime.timedelta(7)
+    x = dt.date.today()
 
-    for i in range(0, 20):
+    monday = x - dt.timedelta(7 - (7 - x.weekday()))
+    add_date = monday - dt.timedelta(7)
+
+    for i in range(0, 11):
         # moves to monday if today is sat or sun
         if (add_date.weekday() > 4):
-            add_date += (datetime.timedelta(1) * (7 - add_date.weekday()))   
+            add_date += (dt.timedelta(1) * (7 - add_date.weekday()))   
 
-        trading_days.append(str(add_date.month) + "/" + str(add_date.day))
-        add_date += datetime.timedelta(1)
+        trading_days.append(str(add_date.year) + "-" + str(add_date.month) + "-" + str(add_date.day))
+        add_date += dt.timedelta(1)
 
     return trading_days
 
 
-# called from kivy_code init()
+# called from kivy_code init(), used to find right btns to highlight
 # gets the day of week -5 it is so it fits as an index in kivy.make_row(), 0 = mon, 6 = sun
-def get_todays_date():
+def get_todays_index():
     # if it's a sat or sun, return fri
-    day = int(datetime.date.today().weekday())
+    day = int(dt.date.today().weekday())
     if (day == 5 or day == 6):
-        return -1
-    else:
-        return day - 5
-
-
-# sql needs the month and year to make a new table
-# strftime("%B") converts the month num to the month name (3 -> march)
-# called from kivy init(), returns list of last month, this month, and next month ex) ["12, dec2019", "Jan2020"]
-def get_month_year():
-    tablenames = []
-    currmonth = datetime.date.today()
-
-    first = currmonth.replace(day = 1)         # 1st of the month
-    lastmonth = first - datetime.timedelta(1)  # month is now last month, year roll over included
-    nextmonth = first + datetime.timedelta(32) # month is now next month, year roll over included
-
-    tablenames.append(lastmonth.strftime("%B") + str(lastmonth.year))
-    tablenames.append(currmonth.strftime("%B") + str(currmonth.year))
-    tablenames.append(nextmonth.strftime("%B") + str(nextmonth.year))
+        day = 4
     
-    return tablenames
+    return -day - 3   # mon = -3, fri = -7
 
 
 # called from testing
-# when reading sql data, it could go into last or next month's tables, this determines that and returns the correct tables for the week
-def get_curr_table(tablenames, date):
-    picked_month = int((date[0]))
-    curr_month = int(tablenames[1][0])
+# converts date for data into the name of the right sql table. (date = 2020-month-day or 2020-month
+def make_table_name(date, tablenames):
+    date = date.split("-")
+    date = dt.date(int(date[0]), int(date[1]), 1)
+    table = date.strftime('%B').lower() + str(date.year)   # ex) july2020
 
-    if (picked_month < curr_month):
-        return tablenames[0]
-    elif (picked_month == curr_month):
-        return tablenames[1]
-    else:
-        return tablenames[2]
+    return table
 
 
 # called from kivy_code.update_ui()
-# if week goes into 2 diff months, then get tickers from 2 tables
-def call_get_tickers(tablenames, trading_days):
-    ticker_list = sql_handling.get_tickers(tablenames[1])
+# get tickers from this month and last month
+# pm: tablenames = list of all tablenames in db
+def call_get_tickers(tablenames):
+    today = dt.date.today()
+    ticker_list = []
+    for i in range(0, 2):
+        table = make_table_name(str(today.year) + "-" + str(int(today.month) - i), tablenames)
 
-    if (trading_days[15][0] != trading_days[-1][0]):
-        if (trading_days[15][0] > trading_days[-1][0]):   # if fri goes into next month
-            ticker_list.extend(sql_handling.get_tickers(tablenames[2]))
+        sql_handler.check_table_exists(table, tablenames)
 
-        else:                                             # if mon goes into last month
-            ticker_list.extend(sql_handling.get_tickers(tablenames[0]))
+        add = sql_handler.get_data(table, "", "", "tickers")
+        # blank sql tables trigger this
+        if (add != ""):
+            ticker_list.extend(add)
 
     return ticker_list
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-# called from kivy_code.call_get_data()
 # gets a list of sql data at app start to write to UI
-# pm ex): tablenames = list of 3 tablenames, trading_day = "6/15", ticker = "cde"
+# pm ex): trading_day = "2020-6-15", ticker = "cde"
 def call_get_data(tablenames, trading_day, ticker):
     # time frame could go into next month
-    table_to_use = get_curr_table(tablenames, trading_day)
+    table_to_use = make_table_name(trading_day, tablenames)
 
     # get the col name
-    column = sql_handling.updator(int(trading_day.split("/")[1]))
+    col = sql_handler.updator(int(trading_day.split("-")[2]))
 
     # get the cell data
     data = [trading_day]
-    week_list = sql_handling.get_data(table_to_use, column, ticker).split("*")
-    for element in week_list:
-        data.append(element)
+    data.extend(sql_handler.get_data(table_to_use, col, ticker, "cell").split("*"))
 
-    return data
+    # blank cells would trigger this
+    if (data[-1] == ""):
+        del data[-1]
 
-
-
-
-
-# called at start of kivy_code()
-# when user wants to enter info, the today and yesterday btns should be disabled only if
-# > they are non-trading days
-def kivy_btn_disabler():
-    disabler = [False, False]
-
-    day = datetime.date.today().weekday()
-    if (day == 0 or day == 6):
-        disabler[0] = True
-    if (day == 6 or day == 5):
-        disabler[1] = True
-    
-    return disabler
+    return data   # ex) [ date, cp, % ema, bm, % gain, rating ]
 
 
-# called from kivy
-# checks format of user entered date - Note: btns are already disabled if they connect to a weekend
-#  > so user could't press them - thus only check txt input
-def check_user_date(btn1, btn2, txtin, trading_days, flag):
-    # check text input  
-    if (flag == "txtin"):
-        if (len(txtin.text) > 5):
-            return "Rejected, invalid date"
-        elif ("/" not in txtin.text):
-            return "Rejected, invalid date format (correct ex: 4/15)"
-        splitstr = txtin.text.split("/")
-        if (not(splitstr[0].isnumeric() and splitstr[1].isnumeric())):
-            return "Rejected, invalid date format (correct ex: 4/15)"
-        elif (txtin.text not in trading_days):
-            return "Rejected, can't enter for that date"
-
-        return txtin.text
-    
-    # if btns, return their dates
-    else:
-        day = datetime.date.today().weekday()   # mon = 0
-
-        if (flag == "Yesterday"):
-            return trading_days[day - 6]
-
-        else:
-            return trading_days[day - 5]
-
-
-# called from kivy
-# Prior to this I don't know what data fields user filled out, also formats it
-# pm is a button so logic is: btn -> box -> grid -> 4 txt inputs
-def check_user_data(ui_access):
-    fast = ui_access.parent.children  # the grid, data is in spots 5, 7, 9, 11
-    data = [None, None, None, None]   # ticker, cp, % from 400 ema, breakout_moves
-
-    for i in range(6, -1, -2):
-        if (fast[i].text != ""):
-            input = fast[i].text
-
-            # ticker, can only have letters and /. Input will be "" is user close to update ticker rather than make new ticker
-            if (i == 6):
-                if (input[0] == "/"):
-                    input = ticker[1:]
-                if (input.isalpha() == False or len(input) > 5):
-                    return "Ticker invalid, not all alphas or too long"                
-                data[0] = input.lower()
-
-            # close price and % gain
-            elif (i == 2 or i == 4):
-                if (i == 2):
-                    if (input[-1] == "%"):
-                        input = input[:-1]
-                    
-                    elif (input[0] == "$"):
-                        input = input[1:]
-
-                if (input.find(".") == -1):   # user could enter "small" - this is only way to catch it
-                    if (input.isnumeric() == False):
-                        return "Invalid number"
-                else:
-                    holder = input.split(".")
-                 
-                    if (holder[0].isnumeric() == False or holder[1].isnumeric() == False):
-                        return "Invalid number"
-
-                    if (len(holder[0]) > 5):
-                        holder[0] = holder[0][:5]
-                    if (len(holder[1]) > 2):
-                        holder[1] = holder[1][:2]
-
-                    holder = holder[0] + "." + holder[1]   # testing is this a str?
-
-                if (i == 4):
-                    data[1] = input
-                else:
-                    data[2] = input
-
-            # break out moves
-            else:   
-                input = input.lower()                
-
-                if (input != "fake" and input != "small" and input != "big"):
-                    return "invalid phrase"
-                elif (len(input) > 5):
-                    return "invalid phrase"
-                elif (input.isalpha() == False):
-                    return "invalid phrase"
-
-                data[3] = input
-
-    if (data == [None, None, None, None]):
-        return "No data was entered"
-    else:
-        return data
-
-
-# called from sql_handling.write_to_sql()
-# this method is called in a loop, each time data is a string touple of new user entered data
 # db has things separated by "*", and breakout_moves is a touple since it's many data points
-def format_sql_data(tablename, new_col, data):
-    # ex data) [ticker, cp, % 400 ema, breakout_moves]
-    # ex prev_data) [cp, % 400 ema, breakout moves, % gain, rating]
+def format_sql_data(table, col, data, ticker):
+    # ex data)      [ cp, % ema, bm, % gain, rating ]
+    # ex prev_data) [ cp, % ema, bm, % gain, rating ]
     write_data = ""
-    prev_data = sql_handling.get_data(tablename, new_col, data[0])
+    prev_data = sql_handler.get_data(table, col, ticker, "cell")
 
     # format prev_data
-    if (prev_data == "None"):
+    if (prev_data == ""):
         prev_data = "?*?*?*?*?"
 
     prev_data = prev_data.split("*")
 
-    # replace data, data[0] is ticker so skip that
-    for i in range(0, len(data[1:])):
-        if (data[i + 1] != None):
-            prev_data[i] = data[i + 1]
-
-    # put the prev_data together to get ready to overwrite to sql
-    for i in range(0, len(prev_data)):
+    # merge data into prev_data and start re-combining prev_data into a str
+    for i in range(0, len(data)):
+        if (data[i] != "?"):
+            prev_data[i] = str(data[i])
         write_data = write_data + prev_data[i] + "*"
 
     # these '' are dumb formatting for sql
     return "'" + write_data[:-1] + "'"
 
 
-# called from kivy.make_row()
+# collects all sql data for ticker_list into a 2d list for program to use
+# each append to master_list is: [ date, cp, % ema, bm, % gain, rating ]
+# pm: tablenames = all tables, ticker_list = tickers of this/last month, trading days = this/last weeks trading days
+def get_all_data(tablenames, ticker_list, trading_days):
+    master_list = []
+
+    for i in range(0, len(ticker_list)):
+        master_list.append([ticker_list[i]])
+
+        get_api_data(master_list[-1], ticker_list[i], trading_days, tablenames)
+
+    return master_list
+
+
+# this is called in a loop at app start, and once when user enters new ticker
+# gets sql data / api data on tickers, adds to master list
+# pm: ticker = cde, trading_days = full list, i = outer loop (ticker), j = index I'm curr on since this is called in loops
+# pm: data = master_list[i], it's data for 1 ticker, starts as just the ticker, then I add in [date, cp, %  ema, bm, % gain, rating ] for all 10 days
+def get_api_data(data, ticker, trading_days, tablenames):
+    stop_flag = ""
+    filled_flag = ""
+    check_date = dt.date.today() + dt.timedelta(days = 1)
+    check_date = str(check_date.year) + '-' + str(check_date.month) + '-' + str(check_date.day)
+
+    for i in range(1, 11):
+        # if it's past curr weeks trading day, then yfinance breaks thus making finding % gain break
+        if (trading_days[i - 1] == check_date):
+            stop_flag = "past today"
+
+        data.append(call_get_data(tablenames, trading_days[i - 1], ticker))   # dim 2
+
+        # blank sql cells trigger this
+        if (len(data[i]) == 1):
+            data[i].extend(["?", "?", "?", "?", "?"])
+
+        # get all missing cp's
+        if (stop_flag != "past today" and data[i][1] == "?"):
+            # returns "?" if called intraday
+            data[i][1] = get_close_prices(ticker, trading_days[i - 1], trading_days[i])
+            if (data[i][1] != "?"):
+                filled_flag = "filled"
+
+        # get all missing % gains
+        if (stop_flag != "past today" and data[i][4] == "?" and i > 1):
+            data[i][4] = calc_percent_gain(float(data[i - 1][1]), float(data[i][1]))
+            filled_flag = "filled"
+        
+        # the first date of each ticker will be missing its % gain
+        if (stop_flag != "past today" and data[1][4] == "?"):
+            prior_date = get_diff_date(trading_days[0], "prior")
+            cp_prior = get_close_prices(ticker, prior_date, trading_days[0])
+            data[1][4] = calc_percent_gain(float(cp_prior), float(data[1][1]))
+
+        # calculate missing ratings
+        if (stop_flag != "past today" and data[i][5] == "?" and i > 5):
+            data[i][5] = create_rating(data[1:i + 1])
+            print(data[i][5])   # testing
+            if (data[i][5] != "?"):
+                filled_flag = "filled"
+
+        # if any data changed, write it to sql (possible 2 things changed so I waited to write this)
+        if (filled_flag == "filled"):
+            col = sql_handler.updator(int(data[i][0].split("-")[2]))
+            table = make_table_name(trading_days[i - 1], tablenames)
+
+            formatted_data = format_sql_data(table, col, data[i][1:], ticker)
+            sql_handler.write_to_sql(table, col, formatted_data, ticker)
+    
+        filled_flag = ''
+
+    return data
+
+
 # calculates the % gain which is 1 - (yesterday's close price / todays close price)
-# pm: btn_list = access btn data
-def find_percent_gain(btn_list, tablenames, trading_days):
-    cp1 = btn_list[-1].ids["close_price"]   # the curr day in make_row()
-    if (cp1 == "?"):
-        return "?"
+# pm: the cp's are float close prices
+def calc_percent_gain(cp_yest, cp_tod):
+    return str(round((1.00 - (cp_yest / cp_tod)) * 100, 2))
 
-    # if cp1 is mon I need to call sql to get last fri
-    if (btn_list[-2].id == "ticker_btn"):
-        curr_table = get_curr_table(tablenames, btn_list[-1].ids["date"])          # get table
-        fri = (trading_days[(trading_days.index(btn_list[-1].ids["date"])) - 1])   # get index / uses that to get date of last fri
-        col = sql_handling.updator(int((fri.split("/"))[1]))                       # get correct col (the day)
-        cp2 = sql_handling.get_data(curr_table, col, btn_list[-1].ids["ticker"])   # get data of that cell
-        cp2 = cp2[1]                                                               # this is the close price of that cell
+
+# sat/sun may disable yest/today btns in UI (non-trading days)
+# pm: yest_btn = yesterday btn, tod_btn = today_btn
+def kivy_btn_disabler(yest_btn, tod_btn):
+    day = dt.date.today().weekday()
+    if (day == 0 or day == 6):
+        yest_btn.disabled = True
+    if (day == 6 or day == 5):
+        tod_btn.disabled = True
+
+
+# called from kivy
+# checks format of user entered date - Note: btns are already disabled if they connect to a weekend
+#  > so user could't press them - thus only check txt input
+def check_user_date(txtin, trading_days, flag):
+    day = dt.date.today()
+
+    # check text input
+    if (flag == "txtin"):
+        if (len(txtin.text) > 5):
+            return "Rejected, invalid date"
+        txtin.text = txtin.text.replace("/", "-")   # does nothing if "/" isn't there
+        if ("-" not in txtin.text):
+            return "Rejected, invalid date format (correct ex: 4-15)"
+        splitstr = txtin.text.split("-")
+        if (not(splitstr[0].isnumeric() and splitstr[1].isnumeric())):
+            return "Rejected, invalid date format (correct ex: 4-15)"
+
+        return str(day.year) + "-" + txtin.text
     
+    # if btns, return their dates
     else:
-        cp2 = btn_list[-2].ids["close_price"]
+        day = day.weekday()   # mon = 0
 
-    if (cp2 != "?"):
-        return str(round(1.00 - (float(cp2) / float(cp1)), 2))
+        if (flag == "Yesterday"):
+            return trading_days[day - 7]
+
+        else:
+            return trading_days[day - 6]
+
+
+# called from kivy
+# Prior to this I don't know what data fields user filled out, also formats it
+# pm is a button so logic is: btn -> box -> grid -> 4 txt inputs 
+def check_user_data(ui_access):
+    fast = ui_access.parent.children  # the grid, data is in spots 4, 2, 0
+    data = ["?", "?", "?"]   # ticker, % from 400 ema, breakout_moves
+
+    for i in range(4, -1, -2):
+        if (fast[i].text != ""):
+            input = fast[i].text
+
+            # ticker, can only have letters and /. Input will be "" is user chose to update ticker rather than make new ticker
+            if (i == 4):
+                if (input[0] == "/"):   # futures trigger this
+                    input = ticker[1:]
+                if (input.isalpha() == False or len(input) > 5):
+                    return "Rejected ticker invalid. Not all alphas or too long"                
+                data[0] = input.lower()
+
+            # check % ema
+            elif (i == 2):
+                if (input[-1] == "%"):
+                    input = input[:-1]
+
+                if (input.find(".") == -1):   # user could enter "small" - this is only way to catch it
+                    if (input.isnumeric() == False):
+                        return "Rejected, invalid number"
+                
+                holder = input.split(".")
+                
+                if (holder[0].isnumeric() == False or holder[1].isnumeric() == False):
+                    return "Rejected, invalid number"
+
+                if (len(holder[0]) > 5):
+                    holder[0] = holder[0][:5]
+                if (len(holder[1]) > 2):
+                    holder[1] = holder[1][:2]
+
+                data[1] = input
+
+            # break out moves
+            else:   
+                input = input.lower()                
+
+                if (input != "fake" and input != "small" and input != "big"):
+                    return "Rejected, invalid phrase"
+                elif (len(input) > 5):
+                    return "Rejected, invalid phrase"
+                elif (input.isalpha() == False):
+                    return "Rejected, invalid phrase"
+
+                data[2] = input
+
+    return data
+
+
+# returns data in format: [ cp, % ema, bm, % gain, Rating ]
+# pm: user_data = [ticker, % ema, bm], "?" for missing data, user_date = 2020-5-6
+# pm: enddate = yfinance needs day after user_date to get user_date data
+def format_user_data(ticker, user_data, user_date, enddate):
+    prior_date = get_diff_date(user_date, "prior")
+    cp_prior = get_close_prices(ticker, prior_date, user_date)
+    
+    user_data = ["?", user_data[1], user_data[2], "?", "?"]
+    user_data[0] = get_close_prices(ticker, user_date, enddate)
+    user_data[3] = calc_percent_gain(float(cp_prior), float(user_data[0]))
+
+    return user_data
+
+
+# sometimes I need the prior date, sometimes I need the next date
+def get_diff_date(user_date, command):
+    new_date = user_date.split("-") 
+    new_date = dt.date(int(new_date[0]), int(new_date[1]), int(new_date[2]))
+    day = new_date.weekday()
+
+    if (command == "prior"):
+        if (day == 0):
+            new_date -= dt.timedelta(days = 3)   # user_date is almost always mon, so go to last fri
+        else:
+            new_date -= dt.timedelta(days = 1)   # adding new ticker triggers this
     else:
-        return "?"
+        if (day < 4):
+            new_date += dt.timedelta(days = 1)
+        elif (day == 5):
+            new_date += dt.timedelta(days = 2)
+        else:
+            new_date += dt.timedelta(days = 3)  
+
+    return str(new_date.year) + '-' + str(new_date.month) + '-' + str(new_date.day)
 
 
-# called from kivy.make_row()
+# called when user updates tickers data
+# if user_date is in master_list, then update master_list. Else, reformat
+# user_data so it works with sql then insert at start of master_list
+# ex) user_data: [ ticker, % ema, bm ], sql needs to be: [ cp, % ema, bm, % gain, Rating ]
+# pm: user_date: 2020-5-6
+def compare_masterlist(master_list, trading_days, ticker_list, tablenames, user_data, user_date, plus_btn_clicked_id, table, ticker):    
+    next_date = get_diff_date(user_date, "next")   # guarenteed to need cp, so get next days date for yfinance
+
+    if (plus_btn_clicked_id == "update ticker btn"):
+        date_pos = trading_days.index(user_date) + 1
+
+        if (user_date in trading_days):
+            # add new data to master_list, then write that to sql
+            tick_pos = ticker_list.index(ticker)   # tickerlist and masterlist are in same order, masterlist has ticker wrapped in list so I do this
+
+            for i in range(2, 4):
+                if (master_list[tick_pos][date_pos][i] != user_data[i - 1] and user_data[i - 1] != "?"):
+                    master_list[tick_pos][date_pos][i] = user_data[i - 1]
+
+            # possibly the days rating changed
+            master_list[tick_pos][date_pos][-1] = create_rating(master_list[tick_pos][1:date_pos])
+
+            col = sql_handler.updator(int(user_date.split("-")[2]))
+            write_data = format_sql_data(table, col, master_list[tick_pos][date_pos][1:], ticker)   # combine data with sql data
+            sql_handler.write_to_sql(table, col, write_data, ticker)          # write data to sql
+
+        else:
+            # format user_data, write to sql. doesn't go in master_list
+            user_data = format_user_data(ticker, user_data, user_date, next_date)
+
+            col = sql_handler.updator(int(user_date.split("-")[2]))
+            write_data = format_sql_data(table, col, user_data[1:], ticker)   # combine data with sql data
+            sql_handler.write_to_sql(table, col, write_data, ticker)          # write data to sql
+
+    # add new ticker
+    else:
+        master_list.append([ticker])
+
+        get_api_data(master_list[-1], ticker, trading_days, tablenames)
+
+        date_pos = trading_days.index(user_date) + 1
+        master_list[-1][date_pos][2] = user_data[1]   # add % ema from user data
+        master_list[-1][date_pos][3] = user_data[2]   # add bm from user data
+
+        col = sql_handler.updator(int(user_date.split("-")[2]))
+        write_data = format_sql_data(table, col, ['?', user_data[1], user_data[2], "?", "?"], ticker)   # combine data with sql data
+        sql_handler.write_to_sql(table, col, write_data, ticker)          # write data to sql
+
+    return master_list
+        
+
 # use custom formula to give each day a buy rating - only if there's enough prior / present info
-# pm: tablenames = last/curr/next month, this_weeks_data = data from this week up to the curr day since this is called for each btn
-# pm: last_week_trade_days = dates of mon-fri last week
-def create_rating(curr_btn, tablenames, this_weeks_data, last_week_trade_days, ticker):
-    # ex data) [ [ date, cp, % 400 ema, breakout moves, % gain, rating ] ]
-    # ex data) [ [ 6/15, ?, 15.6, 'fake,fake', 4.3, 7.5 ] ]
-    # this_weeks_data is the same as data
-    data = []
-    for i in range(0, 5):
-        data.append(call_get_data(tablenames, last_week_trade_days[i], ticker))
-        if (len(data[-1]) == 2):
-            data[-1] = [data[-1][0], "?", "?", "?", "?", "?"]
-    
-    data.extend(this_weeks_data)
-
+# pm: data = [ date, cp, % ema, bm, % gain, rating ]
+def create_rating(data):
     breakout_handler = [0, []]      # accepts return which is tuple of score and breakout_list
     percent_gain_handler = [0, 0]   # accepts return which is tuple of score and counter
     percent_ema_handler = [0, 0]    # accepts return which is tuple of score and counter
     rating_handler = [0, 0]         # accepts return which is tuple of score and counter
+    day = dt.date.today().weekday()
 
-    # for past data then this weeks data, for each category, and for each day of the week
-    # cat is 2 - 6 bec 0 and 1 are date and cp neither of which is used in this block
-    for cat in range(2, 6):
-        for day in range(0, len(data)):
-            test_data = data[-day - 1][cat]
+    for i in range(len(data) - 1, 0, -1):
+        if (data[i][2] != "?" and percent_ema_handler[1] < 5):
+            percent_ema_handler = rating_percent_ema(float(data[i][2]), percent_ema_handler)
 
-            if (test_data != "?"):
-                if (len(breakout_handler[1]) < 3 and cat == 3):
-                    breakout_handler = rating_breakout_moves(test_data, breakout_handler)
+        if (data[i][3] != "?" and len(breakout_handler[1]) < 3):
+            breakout_handler = rating_breakout_moves(data[i][3], breakout_handler)
 
-                if (percent_gain_handler[1] < 5 and cat == 4):
-                    percent_gain_handler = rating_percent_gain(float(test_data), percent_gain_handler)
+        if (data[i][4] != "?" and percent_gain_handler[1] < 5):
+            percent_gain_handler = rating_percent_gain(float(data[i][4]), percent_gain_handler)
 
-                if (percent_ema_handler[1] < 5 and cat == 2):
-                    percent_ema_handler = rating_percent_ema(float(test_data), percent_ema_handler)
-
-                if (rating_handler[1] < 5 and cat == 5):
-                    rating_handler = rating_rating(float(test_data), rating_handler)
+        if (data[i][5] != "?" and rating_handler[1] < 5):
+            rating_handler = rating_rating(float(data[i][5]), rating_handler)
 
     # only return rating if there's enough data
-    if (breakout_handler[1] < 1 or percent_gain_handler[1] < 5 or percent_ema_handler[1] < 5 or rating_handler < 5):
+    if (len(breakout_handler[1]) < 1 or percent_gain_handler[1] < 5 or percent_ema_handler[1] < 5):
         return "?"
     else:
         return str((breakout_handler[0] + percent_gain_handler[0] + percent_ema_handler[0] + rating_handler[0]) / 4.0)
 
 
-# called from create_rating()
 # updates score with prev % ema's - part of calculating rating
 # pm: test_data = that days float % ema
 def rating_percent_ema(test_data, handler):
@@ -354,7 +456,6 @@ def rating_percent_ema(test_data, handler):
     return handler 
 
 
-# called from create_rating()
 # updates score with breakout_moves - part of calculating rating
 def rating_breakout_moves(test_data, handler):
     if (test_data == "fake"):
@@ -382,7 +483,6 @@ def rating_breakout_moves(test_data, handler):
     return handler
 
 
-# called from create_rating()
 # updates score with prev percent_gain's - part of calculating rating
 # pm: test_data = that days float % gain
 def rating_percent_gain(test_data, handler):
@@ -396,7 +496,7 @@ def rating_percent_gain(test_data, handler):
         handler[0]
 
     elif (test_data > 1 and test_data < 2): 
-        handler[0] += 1, 
+        handler[0] += 1
     elif (test_data > 2 and test_data < 3): 
         handler[0] += 1
     elif (test_data > 3 and test_data < 4): 
@@ -419,7 +519,6 @@ def rating_percent_gain(test_data, handler):
     return handler
 
 
-# called from create_rating()
 # updates score with prev ratings - part of calculating rating
 # pm: test_data = that days str rating
 def rating_rating(test_data, handler):
@@ -453,25 +552,7 @@ def rating_rating(test_data, handler):
 
 
 
-def testing():
-    dates = ['6/2', '6/11', '6/12', '6/17', '6/18']
-    data = [('Ticker', 'ugaz'), ('Close_Price', '15.6'), ('Percent_From_400_ema', '3.4')]
-    btn_list = None
-    user_date = '6/17'
-    plus_btn_clicked_id = 'top_add_btn'
-    
 
-    sql_handling.connect_to_db()
-    #call_get_data("june2020", dates)
-    #kivy_code.make_row(btn_list, mast_list, trading_day)
-
-
-#testing()
-
-
-
-
-#print("pause")
 
 
 
