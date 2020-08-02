@@ -281,12 +281,12 @@ def check_user_data(ui_access):
 
             # ticker, can only have letters and /. Input will be "" is user chose to update ticker rather than make new ticker
             if (i == 4):
-                if (input[0] == "/"):   # futures trigger this
-                    input = ticker[1:]
-                if (input.isalpha() == False or len(input) > 5):
-                    return "Rejected ticker invalid. Not all alphas or too long"                
-                data[0] = input.lower()
-
+                result = check_uesr_ticker(ticker)
+                if (isinstance(result, str)):
+                    return result
+                else:
+                    data[0] = input.lower()
+              
             # check % ema
             elif (i == 2):
                 if (input[-1] == "%"):
@@ -322,6 +322,21 @@ def check_user_data(ui_access):
                 data[2] = input
 
     return data
+
+
+def check_user_ticker(ticker):
+    flag = False
+
+    if (ticker[0] == "/"):   # futures trigger this
+        ticker = ticker[1:]
+        flag = True
+    if (ticker.isalpha() == False or len(ticker) > 5):
+        return "Rejected ticker invalid. Not all alphas or too long"
+    
+    if (flag == False):
+        return ticker
+    else:
+        return "/" + ticker
 
 
 # returns data in format: [ cp, % ema, bm, % gain, Rating ]

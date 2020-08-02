@@ -80,9 +80,25 @@ class Main_Page(BoxLayout):
 
 
     # EVENT: user entered a ticker to search
-    # I need to test if it's valid, if it's in the saved_df, or call backend to find it
+    # if ticker doenst' exist: do a popup saying so
+    # else, move the tickers row to the first in the table / also that to master_list
+    # highlight it for 1 second
     def on_search_enter(self, instance):
-        pass
+        ticker = instance.parent.children[2].text
+        if (ticker not in self.ticker_list):
+            self.create_popup("Rejected: not a current ticker")
+            return
+ 
+        # move ticker data from its pos to the front of masterlist - do same for ticker_list
+        tick_pos = self.ticker_list.index(ticker)
+        self.ticker_list.insert(0, ticker)
+        self.master_list.insert(0, self.master_list[tick_pos])
+        
+        del self.ticker_list[tick_pos + 1]
+        del self.master_list[tick_pos + 1]
+
+        self.update_ui("on search enter")
+
 
     # EVENT: called from modalview_menu
     # if user types anything, de-select pressed btn's
@@ -248,8 +264,8 @@ class Main_Page(BoxLayout):
             # highlight all of todays btns
             # BUG: will get lighter and lighter each refresh because of background_normal, can't find any solutions
             #if (len(self.btn_list) % (highlight_counter) == 0): 
-                #self.btn_list[-1].background_normal = ""             # disables background image (grey) so the background color isn't tinted grey
-                #self.btn_list[-1].background_color = [1,1,0.3,0.9]   # yellow
+            #    self.btn_list[-1].background_normal = ""             # disables background image (grey) so the background color isn't tinted grey
+            #    self.btn_list[-1].background_color = [1,1,0.3,0.9]   # yellow
 
             self.btn_list[-1].ids["ticker"] = ticker
             self.btn_list[-1].ids["date"] = data[i][0] 
