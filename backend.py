@@ -2,6 +2,8 @@ import datetime as dt
 import sql_handler
 import yfinance as yf   # get api data
 import pandas as pd     # yfinance returns as panda df
+from math import sin    # plot handling
+from kivy_garden.graph import Graph, MeshLinePlot   # plot handling
 
 
 # if yfinance is called intraday, it'll return a close price of the current price - which is wrong
@@ -248,6 +250,10 @@ def check_user_date(txtin, trading_days, flag):
         splitstr = txtin.text.split("-")
         if (not(splitstr[0].isnumeric() and splitstr[1].isnumeric())):
             return "Rejected, invalid date format (correct ex: 4-15)"
+
+        date = dt.date(day.year, int(splitstr[0]), int(splitstr[1])).weekday()
+        if (date == 5 or date == 6):
+            return "Rejected, can't enter data for a weekend"
 
         return str(day.year) + "-" + txtin.text
     
@@ -547,10 +553,40 @@ def rating_rating(test_data, handler):
     return handler
 
 
+def make_plot(ratings_list, plot_tickers, plot_colors):
+    # Prepare the data
+    x = [1,2,3,4,5,6,7,8,9,10]
+    #ratings = [[4,5,8,9,4,3,2,6,8,7], [7,8,6,2,3,4,9,8,5,4], [5,6,8,6,2,3,4,8,2,1]]
+
+    # make the graph
+    graph = Graph(xlabel='Dates', ylabel='Ratings', x_ticks_minor = 1, x_ticks_major = 2,
+                  y_ticks_minor = 1, y_ticks_major = 2, y_grid_label=True, x_grid_label=True,
+                  padding=5, x_grid=True, y_grid=True, xmin=0, xmax=10, ymin=0, ymax=20)
+
+    i = 0
+    while (i < len(plot_tickers)):
+        plot = MeshLinePlot(color = plot_colors[i])
+        plot.points = [(i, j) for i, j in zip(x, ratings_list[i])]
+
+        graph.add_plot(plot)
+        i += 1
+
+    return graph
 
 
+# return tickers ratings for plot, those are stored as str's in master__list
+def plot_get_ratings(master_list, ticker_index):
+    new_list = []
 
+    for i in range(0, 10):
+        new_list.append(master_list[ticker_index][i + 1][5])
 
+        if (new_list[-1] == "?"):
+            new_list[-1] = 0.0
+
+        new_list[-1] = float(new_list[-1])
+
+    return new_list
 
 
 

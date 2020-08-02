@@ -23,13 +23,16 @@ class Main_Page(BoxLayout):
         super(Main_Page, self).__init__(**kwargs)      # this is only for if kivy code goes in the py file
 
         # backend things
-        sql_handler.connect_to_db()                      # create db
-        self.tablenames = sql_handler.get_tables()       # list of all sql tables
-        self.trading_days = backend.get_trading_days()  # list of last/this week's trading days, excludes weekends
-        self.btn_list = []                                              # holds all btns but the headers
+        sql_handler.connect_to_db()                                    # create db
+        self.tablenames = sql_handler.get_tables()                     # list of all sql tables
+        self.trading_days = backend.get_trading_days()                 # list of last/this week's trading days, excludes weekends
+        self.btn_list = []                                             # holds all btns but the headers
         self.ticker_list = backend.call_get_tickers(self.tablenames)   # holds all tickers used (so I don't have to call sql over and over)
         self.master_list = backend.get_all_data(self.tablenames, self.ticker_list, self.trading_days)
-        self.todays_index = backend.get_todays_index()
+        self.todays_index = backend.get_todays_index()                 # day of the week
+        self.plot_tickers = []                                         # tickers to show on the plot
+        self.plot_colors = [[1,0,0,1], [1,1,0,1], [1,0,1,1]]           # red, yellow, purple | colors to make the plot
+        self.plot_ratings = []                                    # holds ratings for the plot (2d list)
 
         # ---------------------------------------------------------------------------------
 
@@ -203,6 +206,7 @@ class Main_Page(BoxLayout):
         self.update_ui(plus_btn_clicked_id)
 
 
+
     # -----------------------------------------------------------------------------------------
 
 
@@ -275,6 +279,8 @@ class Main_Page(BoxLayout):
 
         self.btn_list[-1].id = "update ticker btn"
         self.btn_list[-1].fbind("on_release", self.modalview_menu)
+        self.btn_list[-2].id = "plot btn"
+        self.btn_list[-2].bind(on_release = self.plot_reset_data)
 
         # finally, add everything to the gridlayout
         for j in range(len(self.btn_list) - 9, len(self.btn_list)):
@@ -323,6 +329,121 @@ class Main_Page(BoxLayout):
         for i in range(0, len(self.btn_list)):
             del self.btn_list[0]
             del self.children[0].children[0].children[0]   # self -> scrollview -> gridlayout -> btns
+
+
+    # plot handling
+    # --------------------------------------------------------------------------------
+
+
+   # EVENT: user clicked plot btn, because I reset the modal view when user adds/del plot
+    # > tickers, this is the best way to maintain /reset data. Otherwise I recollect data
+    # > each time modal view is reset
+    # w/o this: after each plot, these vars are populated with all the data that was on the plot
+    # > so next time I'd make a plot, it'd be populated with a bunch of data user doesn't want
+    def plot_reset_data(self, instance):
+        self.plot_ratings.append(backend.plot_get_ratings(self.master_list, self.ticker_list.index(instance.ids["ticker"])))
+        self.plot_tickers.append(instance.ids["ticker"])
+
+        self.plot_create(instance)
+
+
+    # pm: ticker = ticker clicked, instance is the btn at first, ignore it
+    # modalview -> boxlayout 
+    # [0]: boxlayout [0]: scrollview -> gridlayout made of labels and btns
+    #                [1]: (legend) gridlayout made of labels
+    # [1]: plot
+    def plot_create(self, instance):
+        mainview = ModalView(size_hint = (0.75, 0.75))
+        box = BoxLayout(orientation = "horizontal")
+
+        # make a the left side
+        leftbox = BoxLayout(orientation = "vertical", size_hint_x = 0.3)
+
+        scroll = ScrollView(do_scroll_x = False, do_scroll_y = True)        # a scroll view will contain the ticker gridlayout
+        ticker_grid = GridLayout(rows = len(self.ticker_list), cols = 2, size_hint_y = None)   # holds tickers
+        ticker_grid.bind(minimum_height = ticker_grid.setter("height"))                        # makes the gridlayout scrollabel via the scrollview
+
+        # populate the scrollview / gridlayout
+        for i in range(0, len(self.ticker_list)):
+            ticker_grid.add_widget(Label(text = self.ticker_list[i], size_hint_x = 0.6))
+            ticker_grid.add_widget(Button(text = "+", size_hint_x = 0.4))
+
+            # if ticker is shown on plot
+            if (self.ticker_list[i] in self.plot_tickers):
+                ticker_grid.children[0].text = 'X'
+                ticker_grid.children[0].background_color = [1,0,0,1]
+
+            # bind event methods to btns
+            if (ticker_grid.children[0].text == "+"):
+                ticker_grid.children[0].fbind("on_release", self.plot_add_ticker, ticker_grid.children[1].text, mainview)
+            else:
+                ticker_grid.children[0].fbind("on_release", self.plot_cancel_ticker, ticker_grid.children[1].text, mainview)
+
+
+        # combine everything
+        scroll.add_widget(ticker_grid)                
+        leftbox.add_widget(scroll)
+        leftbox.add_widget(self.plot_make_legend())        # the graph doesn't have legend functionality, so make one
+        box.add_widget(leftbox)
+        box.add_widget(backend.make_plot(self.plot_ratings, self.plot_tickers, self.plot_colors))
+        mainview.add_widget(box)
+
+        mainview.open()
+        
+
+    def plot_make_legend(self):
+        # containg_box is just the label saying "legend" then the actual legend
+        containing_box = BoxLayout(orientation = "vertical", size_hint_y = 0.5, padding = 10)
+        containing_box.add_widget(Label(text = "Legend", size_hint = (1, 0.1)))
+
+        # this is the actual legend
+        legend_grid = GridLayout(rows = 6, cols = 2)
+        legend_grid.add_widget(Label(text = "Ticker"))   # col title
+        legend_grid.add_widget(Label(text = "Color"))    # col title
+        
+        # populated legend_grid
+        for i in range(0, len(self.plot_tickers)):
+            legend_grid.add_widget(Label(text = self.plot_tickers[i]))
+            legend_grid.add_widget(Button(background_color = self.plot_colors[i], disabled = True, background_disabled_normal = ""))
+
+        for i in range(len(legend_grid.children) - 1, 11):
+            legend_grid.add_widget(Label())
+
+        containing_box.add_widget(legend_grid)
+
+        return containing_box
+
+
+    # EVENT: user clicked btn to cancel a ticker from the modalview - so erase it
+    # pm: ticker = 'cde', instance = the X btn clicked
+    def plot_cancel_ticker(self, ticker, mainview, instance):
+        spot = self.plot_tickers.index(ticker)
+        instance.text = "+"
+        instance.background_color = [1, 1, 1, 1]
+        
+        del self.plot_tickers[spot]
+        del self.plot_ratings[spot]
+
+        mainview.dismiss()      # cancel modalview
+        self.plot_create(None)   # restart modalview
+
+
+    # pm: ticker = 'cde', instance = the + btn clicked
+    def plot_add_ticker(self, ticker, mainview, instance):
+        if (len(self.plot_tickers) == 5):
+            return
+
+        instance.text = "X"
+        instance.background_color = [1,0,0,1]
+        
+        self.plot_tickers.append(ticker)
+        self.plot_ratings.append(backend.plot_get_ratings(self.master_list, self.ticker_list.index(ticker)))
+
+        mainview.dismiss()       # cancel modalview
+        self.plot_create(None)   # restart modalview
+
+
+
 
 
 
