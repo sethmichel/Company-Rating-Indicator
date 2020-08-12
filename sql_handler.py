@@ -1,10 +1,10 @@
 import mysql.connector 
 
 mydb = mysql.connector.connect(
-    auth_plugin = "",
-    host = "",
-    user = "",
-    passwd = ""
+    auth_plugin = "mysql_native_password",
+    host = "127.0.0.1",
+    user = "root",
+    passwd = "PhMrlyion97!"
 )
 
 mycursor = mydb.cursor(buffered = True)
@@ -24,11 +24,21 @@ def check_table_exists(table, tablenames):
         tablenames.append(table)
 
 
-# create ticker row in correct table
+# create ticker row in correct table OR makes tickers user updates carry into next months table
 # pm: tablename = single table to write in, ticker_list = all tickers in gui
-def make_row(tablename, ticker, ticker_list):
-    ticker_list.append(ticker)
-    row = "INSERT INTO " + tablename + " (Categories) VALUES (%s)"
+def make_row(table, ticker, plus_btn_clicked_id, ticker_list):
+    if (plus_btn_clicked_id == "top plus btn"):
+        ticker_list.append(ticker)
+
+    try:
+        mycursor.execute("SELECT First FROM " + table + " WHERE Categories = '" + ticker + "'")   # this is successful every single time
+        data = str(mycursor.fetchall())
+        if (data != "[]"):
+            return
+    except:
+        pass
+
+    row = "INSERT INTO " + table + " (Categories) VALUES (%s)"
     val = [ticker]
     mycursor.execute(row, val)
 
@@ -85,7 +95,7 @@ def get_data(table, col, ticker, flag):
     data = str(mycursor.fetchall())
 
     # blank cell is none and the formatting below messes that up
-    if (data == "[(None,)]" or data == '[]' or data == []):
+    if (data.find("None") != -1 or data == []):
         return ''
 
     data = data[3:-3]                   # drop the "[('" and ",)]"
@@ -107,30 +117,29 @@ def get_data(table, col, ticker, flag):
 # testing
 def emergency_correct_1_cell():
     connect_to_db()
-    '''
+    
     # ex data) [ cp, % 400 ema, breakout moves, % gain, rating ]
-    sql = "UPDATE july2020 SET ThirtyFirst = %s WHERE Categories = 'cde'"
-    data = ['?*?*?*?*?']
-    mycursor.execute(sql, data)
-    
-    sql = "UPDATE july2020 SET ThirtyFirst = %s WHERE Categories = 'pays'"
+    sql = "UPDATE augest2020 SET Tenth = %s WHERE Categories = 'cde'"
     data = ['?*?*?*?*?']
     mycursor.execute(sql, data)
     '''
-
-    sql = "UPDATE july2020 SET ThirtyFirst = %s WHERE Categories = 'aal'"
-    data = ['?*?*?*?*?']
+    sql = "UPDATE july2020 SET TwentyEighth = %s WHERE Categories = 'cde'"
+    data = ['8.24*3.5*big*8.86*?']
     mycursor.execute(sql, data)
 
-    sql = "UPDATE july2020 SET ThirtyFirst = %s WHERE Categories = 'spy'"
-    data = ['?*?*?*?*?']
+    sql = "UPDATE july2020 SET TwentyNinth = %s WHERE Categories = 'cde'"
+    data = ['8.43*3.2*?*1.9*?']
     mycursor.execute(sql, data)
 
-    sql = "UPDATE july2020 SET ThirtyFirst = %s WHERE Categories = 'sqqq'"
-    data = ['?*?*?*?*?']
+    sql = "UPDATE july2020 SET Thirtieth = %s WHERE Categories = 'cde'"
+    data = ['8.43*3.4*small*1.9*?']
     mycursor.execute(sql, data)
     
-
+    sql = "UPDATE july2020 SET ThirtyFirst = %s WHERE Categories = 'cde'"
+    data = ['7.93*0.5*?*-6.31*?']
+    mycursor.execute(sql, data)
+    
+    '''
     mydb.commit()
     print("pause")
 

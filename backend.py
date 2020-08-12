@@ -23,17 +23,17 @@ def get_close_prices(ticker, date, dateend):
     time = get_system_time()   # [13, 25, 35 ] as ints
     command = True
 
-    # have to convert date to dt obj, if it's not today, then I don't care about market open times
+    # convert date to dt obj, if it's not today, then I don't care about market open times
     # I'll call this for past days, and future days, but I have other checks to prevent going beyond today and breaking
-    date = date.split('-')
-    date = dt.date(int(date[0]), int(date[1]), int(date[2]))
+    newdate = date.split('-')
+    newdate = dt.date(int(newdate[0]), int(newdate[1]), int(newdate[2]))
     today = dt.date.today()
-    if (date == today):
+    if (newdate == today):
         command = False
 
     # if it's past day then do it, if it's today then check times, it can't be past today
-    # if it's after market close OR (before market open) OR it's at least 20 min after market close
-    if (command == True or (time[0] > 20 or (time[0] < 13 and time[1] < 30) or (time[0] == 20 and time[1] > 20))):
+    # if long after market OR long before market OR (just before market open) OR at least 20 min after market close
+    if (command == True or (time[0] > 20 or (time[0] < 13) or (time[0] < 13 and time[1] < 30) or (time[0] == 20 and time[1] > 20))):
         return str(yf.Ticker(ticker).history(start = date, end = dateend)["Close"][0])
     else:
         return None
@@ -70,8 +70,14 @@ def get_todays_index():
     if (day == 5 or day == 6):
         day = 4
     
-    return -day - 3   # mon = -3, fri = -7
+    return day + 3   # mon = 3, fri = 7
 
+
+# return ex) "8/10"
+def get_todays_date():
+    today = dt.date.today()
+    return str(today.year) + "-" + str(today.month) + "-" + str(today.day)
+    
 
 # called from testing
 # converts date for data into the name of the right sql table. (date = 2020-month-day or 2020-month
@@ -95,8 +101,19 @@ def call_get_tickers(tablenames):
         sql_handler.check_table_exists(table, tablenames)
 
         add = sql_handler.get_data(table, "", "", "tickers")
+
         # blank sql tables trigger this
-        if (add != ""):
+        if (add[0] != ""):
+            length = len(add)
+            i = 0
+            j = 0
+            while (j < length):
+                if (add[i] in ticker_list):
+                    del add[i]
+                    i -= 1
+                i += 1
+                j += 1
+
             ticker_list.extend(add)
 
     return ticker_list
@@ -201,8 +218,8 @@ def get_api_data(data, ticker, trading_days, tablenames):
         # calculate missing ratings
         if (stop_flag != "past today" and data[i][5] == "?" and i > 5):
             data[i][5] = create_rating(data[1:i + 1])
-            print(data[i][5])   # testing
             if (data[i][5] != "?"):
+                data[i][5] = str(round(float(data[i][5]), 2))
                 filled_flag = "filled"
 
         # if any data changed, write it to sql (possible 2 things changed so I waited to write this)
@@ -211,6 +228,7 @@ def get_api_data(data, ticker, trading_days, tablenames):
             table = make_table_name(trading_days[i - 1], tablenames)
 
             formatted_data = format_sql_data(table, col, data[i][1:], ticker)
+            sql_handler.make_row(table, ticker, "", [])
             sql_handler.write_to_sql(table, col, formatted_data, ticker)
     
         filled_flag = ''
@@ -281,12 +299,13 @@ def check_user_data(ui_access):
 
             # ticker, can only have letters and /. Input will be "" is user chose to update ticker rather than make new ticker
             if (i == 4):
-                result = check_uesr_ticker(ticker)
-                if (isinstance(result, str)):
-                    return result
-                else:
-                    data[0] = input.lower()
-              
+                if (ticker[0] == "/"):   # futures trigger this
+                    ticker = ticker[1:]
+                if (ticker.isalpha() == False or len(ticker) > 5):
+                    return "Rejected ticker invalid. Not all alphas or too long"
+ 
+                data[0] = input.lower()
+
             # check % ema
             elif (i == 2):
                 if (input[-1] == "%"):
@@ -295,8 +314,10 @@ def check_user_data(ui_access):
                 if (input.find(".") == -1):   # user could enter "small" - this is only way to catch it
                     if (input.isnumeric() == False):
                         return "Rejected, invalid number"
-                
+                    input = input + ".00"     # triggered if user wrote "5" or "10"
+
                 holder = input.split(".")
+
                 
                 if (holder[0].isnumeric() == False or holder[1].isnumeric() == False):
                     return "Rejected, invalid number"
@@ -322,21 +343,6 @@ def check_user_data(ui_access):
                 data[2] = input
 
     return data
-
-
-def check_user_ticker(ticker):
-    flag = False
-
-    if (ticker[0] == "/"):   # futures trigger this
-        ticker = ticker[1:]
-        flag = True
-    if (ticker.isalpha() == False or len(ticker) > 5):
-        return "Rejected ticker invalid. Not all alphas or too long"
-    
-    if (flag == False):
-        return ticker
-    else:
-        return "/" + ticker
 
 
 # returns data in format: [ cp, % ema, bm, % gain, Rating ]
@@ -432,7 +438,6 @@ def create_rating(data):
     breakout_handler = [0, []]      # accepts return which is tuple of score and breakout_list
     percent_gain_handler = [0, 0]   # accepts return which is tuple of score and counter
     percent_ema_handler = [0, 0]    # accepts return which is tuple of score and counter
-    rating_handler = [0, 0]         # accepts return which is tuple of score and counter
     day = dt.date.today().weekday()
 
     for i in range(len(data) - 1, 0, -1):
@@ -445,14 +450,11 @@ def create_rating(data):
         if (data[i][4] != "?" and percent_gain_handler[1] < 5):
             percent_gain_handler = rating_percent_gain(float(data[i][4]), percent_gain_handler)
 
-        if (data[i][5] != "?" and rating_handler[1] < 5):
-            rating_handler = rating_rating(float(data[i][5]), rating_handler)
-
     # only return rating if there's enough data
     if (len(breakout_handler[1]) < 1 or percent_gain_handler[1] < 5 or percent_ema_handler[1] < 5):
         return "?"
     else:
-        return str((breakout_handler[0] + percent_gain_handler[0] + percent_ema_handler[0] + rating_handler[0]) / 4.0)
+        return str((breakout_handler[0] + percent_gain_handler[0] + percent_ema_handler[0]) / 3.35)
 
 
 # updates score with prev % ema's - part of calculating rating
@@ -460,19 +462,19 @@ def create_rating(data):
 def rating_percent_ema(test_data, handler):
     handler[1] += 1
 
-    if (test_data < 0):
+    if (test_data < 0.0):
         test_data = test_data * -1
 
     # each "if" is giving score based on what % the test_data is (0 - 10%)
-    if (test_data < 1):
-        handler[0] += 5
+    if (test_data <= 1.0):
+        handler[0] += 2.08
 
-    elif (test_data > 1 and test_data < 2):
-        handler[0] += 6
-    elif (test_data > 2 and test_data < 3):
-        handler[0] += 3
-    elif (test_data > 3 and test_data < 4):
-        handler[0] += 1
+    elif (test_data > 1.0 and test_data <= 2.0):
+        handler[0] += 2.5
+    elif (test_data > 2.0 and test_data <= 3.0):
+        handler[0] += 1.25
+    elif (test_data > 3.0 and test_data <= 4.0):
+        handler[0] += 0.41
     
     return handler 
 
@@ -481,25 +483,25 @@ def rating_percent_ema(test_data, handler):
 def rating_breakout_moves(test_data, handler):
     if (test_data == "fake"):
         handler[1].append("fake")
-        handler[0] += 1
+        handler[0] += 0.83
 
     elif (test_data == "small"):
         handler[1].append("small")
-        handler[0] += 2
+        handler[0] += 1.66
 
     elif (test_data == "big"):
         handler[1].append("big")
-        handler[0] += 3
+        handler[0] += 2.50
 
     # 3 fakes in a row = 2 pts
     if (len(handler[1]) > 2 and handler[1][-1] == "fake" and handler[1][-2] == "fake" and handler[1][-3] == "fake"):
-        handler[0] += 2
+        handler[0] += 1.00
     # 2 fakes in row = 1 pt
     elif (len(handler[1]) > 1 and handler[1][-1] == "fake" and handler[1][-2] == "fake"):
-        handler[0] += 1
+        handler[0] += 0.50
     # small then fake = 1 pt
     if (len(handler[1]) > 1 and handler[1][-1] == "small" and handler[1][-2] == "fake"):
-        handler[0] += 1
+        handler[0] += 0.50
 
     return handler
 
@@ -513,78 +515,50 @@ def rating_percent_gain(test_data, handler):
         test_data = test_data * -1
 
     # each "if" is giving score based on what % the test_data is (0 - 10%)
-    if (test_data < 1): 
+    if (test_data <= 1): 
         handler[0]
 
-    elif (test_data > 1 and test_data < 2): 
-        handler[0] += 1
-    elif (test_data > 2 and test_data < 3): 
-        handler[0] += 1
-    elif (test_data > 3 and test_data < 4): 
-        handler[0] += 3 
-    elif (test_data > 4 and test_data < 5): 
-        handler[0] += 3
-    elif (test_data > 5 and test_data < 6): 
-        handler[0] += 4
-    elif (test_data > 6 and test_data < 7): 
-        handler[0] += 5
-    elif (test_data > 7 and test_data < 8): 
-        handler[0] += 6
-    elif (test_data > 8 and test_data < 9): 
-        handler[0] += 8
-    elif (test_data > 9 and test_data < 10): 
-        handler[0] += 9
-
-    else: handler[0] += 10
-
-    return handler
-
-
-# updates score with prev ratings - part of calculating rating
-# pm: test_data = that days str rating
-def rating_rating(test_data, handler):
-    handler[1] += 1
-
-    # if test_data < 1 then don't add anything to score
-
-    if (test_data > 1 and test_data < 4): 
+    elif (test_data > 1.0 and test_data <= 2.0): 
+        handler[0] += 0.25
+    elif (test_data > 2.0 and test_data <= 3.0): 
+        handler[0] += 0.25
+    elif (test_data > 3.0 and test_data <= 4.0): 
+        handler[0] += 0.75
+    elif (test_data > 4.0 and test_data <= 5.0): 
+        handler[0] += 0.75
+    elif (test_data > 5.0 and test_data <= 6.0): 
+        handler[0] += 1.0
+    elif (test_data > 6.0 and test_data <= 7.0): 
+        handler[0] += 1.25
+    elif (test_data > 7.0 and test_data <= 8.0): 
+        handler[0] += 1.5
+    elif (test_data > 8.0 and test_data <= 9.0):
         handler[0] += 2
+    elif (test_data > 9.0 and test_data <= 10.0): 
+        handler[0] += 2.25
 
-    if (test_data > 4 and test_data < 6): 
-        handler[0] += 3
-
-    if (test_data > 6 and test_data < 7): 
-        handler[0] += 4
-
-    if (test_data > 7 and test_data < 8): 
-        handler[0] += 5
-    
-    if (test_data > 8 and test_data < 9): 
-        handler[0] += 6
-
-    else:
-        handler[0] += 8
+    else: handler[0] += 2.5
 
     return handler
 
 
-def make_plot(ratings_list, plot_tickers, plot_colors):
+def make_plot(ratings_list, plot_dates, plot_tickers, plot_colors):
     # Prepare the data
     x = [1,2,3,4,5,6,7,8,9,10]
-    #ratings = [[4,5,8,9,4,3,2,6,8,7], [7,8,6,2,3,4,9,8,5,4], [5,6,8,6,2,3,4,8,2,1]]
 
     # make the graph
-    graph = Graph(xlabel='Dates', ylabel='Ratings', x_ticks_minor = 1, x_ticks_major = 2,
-                  y_ticks_minor = 1, y_ticks_major = 2, y_grid_label=True, x_grid_label=True,
-                  padding=5, x_grid=True, y_grid=True, xmin=0, xmax=10, ymin=0, ymax=20)
+    graph = Graph(ylabel='Ratings', x_ticks_major = 1, y_ticks_minor = 1, y_ticks_major = 1, 
+                  y_grid_label=True, x_grid_label=False, padding=5, x_grid=True, y_grid=True, 
+                  xmin=0, xmax=10, ymin=0, ymax=10)
 
-    i = 0
-    while (i < len(plot_tickers)):
-        plot = MeshLinePlot(color = plot_colors[i])
-        plot.points = [(i, j) for i, j in zip(x, ratings_list[i])]
+    if (len(plot_tickers) > 0):
+        i = 0
+        while (i < len(plot_tickers)):
+            plot = MeshLinePlot(color = plot_colors[i])
+            plot.points = [(i, j) for i, j in zip(x, ratings_list[i])]
 
-        graph.add_plot(plot)
-        i += 1
+            graph.add_plot(plot)
+            i += 1
 
     return graph
 
@@ -596,7 +570,7 @@ def plot_get_ratings(master_list, ticker_index):
     for i in range(0, 10):
         new_list.append(master_list[ticker_index][i + 1][5])
 
-        if (new_list[-1] == "?"):
+        if (new_list[-1] == "?" or new_list[-1] == "-"):
             new_list[-1] = 0.0
 
         new_list[-1] = float(new_list[-1])
@@ -604,6 +578,28 @@ def plot_get_ratings(master_list, ticker_index):
     return new_list
 
 
+# will be the x-axis of plot. 10 most recent trading days
+def plot_make_dates():
+    date_list = []
+
+    date = dt.date.today()        # todays date
+    week_index = date.weekday()
+
+    if (week_index == 5):
+        date -= dt.timedelta(days = 1)
+
+    # go backward from today (or fri if it's a weekend)
+    for i in range(0, 10):
+        # change weekends to fri
+        if (date.weekday() == 6):
+            date -= dt.timedelta(days = 2)
+
+        date_list.insert(0, str(date.month) + "/" + str(date.day))
+
+        date -= dt.timedelta(days = 1)
+
+    return date_list
+        
 
 
 

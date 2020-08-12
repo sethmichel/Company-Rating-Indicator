@@ -1,6 +1,9 @@
 # If viewing on github, add sql connection info like username and password 
 # to the sql_handler.py file
 
+# sql line 34
+
+
 from kivy.app import App
 from kivy.uix.label import Label
 from kivy.uix.button import Button
@@ -14,7 +17,7 @@ from kivy.uix.modalview import ModalView
 from kivy.uix.popup import Popup
 
 import backend
-import sql_handler 
+import sql_handler
 
 
 # all graphics/widgets: grids, btns, labels for all data
@@ -31,44 +34,63 @@ class Main_Page(BoxLayout):
         self.master_list = backend.get_all_data(self.tablenames, self.ticker_list, self.trading_days)
         self.todays_index = backend.get_todays_index()                 # day of the week
         self.plot_tickers = []                                         # tickers to show on the plot
-        self.plot_colors = [[1,0,0,1], [1,1,0,1], [1,0,1,1]]           # red, yellow, purple | colors to make the plot
-        self.plot_ratings = []                                    # holds ratings for the plot (2d list)
+        self.plot_colors = [[1,0,0,1], [1,1,0,1], [1,0,1,1], [0.5,.75,.9,1], [0,1,0.3,1]]   # red, yellow, purple, light blue, green | line colors for plot
+        self.plot_ratings = []                                         # holds ratings for the plot (2d list)
+        self.plot_dates = backend.plot_make_dates()                    # x-axis of plot, 10 most recent trading dates
 
         # ---------------------------------------------------------------------------------
 
         # UI things
         self.orientation = 'vertical'     # rows not cols
-        
-        # there are 2 gridlayouts, the first doens't move, the 2nd scrolls
-        # make gridlayout which is basically the whole boxlayout
-        self.upper_search_layout = GridLayout(rows = 1, cols = 3, size_hint_y = 0.05)
-        self.search_bar = TextInput(multiline = False, hint_text = "Enter a ticker...", size_hint_x = 0.6)
-        self.search_btn = Button(text = "Search", size_hint_x = 0.2)
-        self.add_data = Button(text = "+", size_hint_x = 0.1, id = "top add btn")
-        self.add_data.fbind("on_release", self.modalview_menu)
-        self.search_bar.bind(on_text_validate = self.on_search_enter)
-        self.search_btn.bind(on_release = self.on_search_enter)
+                
+        # this can't a method since I want access to stock_grid later and don't want to try navigating through 2 layers of children for it
+        scroll = ScrollView(do_scroll_x = False, do_scroll_y = True)              # a scroll view will contain the stock gridlayout
+        self.stock_grid = GridLayout(cols = 9, size_hint_y = None)                # holds my stocks
+        self.stock_grid.bind(minimum_height = self.stock_grid.setter("height"))   # makes the gridlayout scrollabel via the scrollview
+        scroll.add_widget(self.stock_grid)
 
-        # add serach box / btn to parents
-        self.upper_search_layout.add_widget(self.search_bar)
-        self.upper_search_layout.add_widget(self.search_btn)
-        self.upper_search_layout.add_widget(self.add_data)
-
-        self.add_widget(self.upper_search_layout)
-
-        # make the 2nd, scrollable gridlayout
-        self.scroll = ScrollView(do_scroll_x = False, do_scroll_y = True)       # a scroll view will contain the stock gridlayout
-        self.stock_grid = GridLayout(cols = 9, size_hint_y = None)              # holds my stocks
-        self.stock_grid.bind(minimum_height = self.stock_grid.setter("height")) # makes the gridlayout scrollabel via the scrollview
-
-        # add the last things to their parents (gridlayout to scroll view, to main boxlayout)
-        self.scroll.add_widget(self.stock_grid)
-        self.add_widget(self.scroll)
+        self.add_widget(self.create_top_grid())    # 1st of 2 gridlayouts (the upper one)
+        self.add_widget(scroll)                    # 2nd of 2 grids (scrollable stock holder)
 
         # some things used throughout / app start methods
         self.make_header_row(["Rating", "Ticker"])   # make the ehader row
         #self.highlight_today()
         self.update_ui("start of app")
+
+
+    # called by init()
+    # returns the top area of my ui which is a grid layout containing
+    # search bar, search btn, add ticker btn, and info btn
+    def create_top_grid(self):
+        grid = GridLayout(rows = 1, cols = 4, size_hint_y = 0.05)
+
+        search_bar = TextInput(multiline = False, hint_text = "Enter a ticker...", size_hint_x = 0.5)
+        search_btn = Button(text = "Search", size_hint_x = 0.2)
+        add_data = Button(text = "+", size_hint_x = 0.1, id = "top add btn")
+        info_btn = Button(text = "i", size_hint_x = 0.1, id = "info btn")
+
+        add_data.fbind("on_release", self.modalview_menu)
+        search_bar.bind(on_text_validate = self.on_search_enter)
+        search_btn.bind(on_release = self.on_search_enter)
+        info_btn.bind(on_release = self.infobtn_popup)
+
+        # add serach box / btn to parents
+        grid.add_widget(search_bar)
+        grid.add_widget(search_btn)
+        grid.add_widget(add_data)
+        grid.add_widget(info_btn)
+
+        return grid
+
+
+    # user clicked the info btn
+    # pm: instance = the info btn from the upper gridlayout
+    def infobtn_popup(self, instance):
+        popup = Popup(title = "Info", title_align = "center", size_hint = (0.6, 0.6))
+        info_text = Label(text = "Only enter data for tickers within the last 10 trading days\nFor each ticker:\n\n1. Enter the distance the close price is from the 300 ema line\n2. Using a 5 day price chart, enter if the stock finished a wave motion. That is, it crossed the 200 ema a while back and it recrossed it on the chosen day. Regardless of above or below the line, enter this as a positive number. You give it a rating based on how big a wave it was\n    ---'fake' means it was a pansey wave and there wasn't a notable overall change\n    ---'small' means it was a small change (this takes longer than a fake)\n    ---'big' means a large price change (which also takes a while)", text_size = (popup.width * 4.5, None))
+        popup.content = info_text
+
+        popup.open()
 
 
     # create error popup
@@ -212,14 +234,14 @@ class Main_Page(BoxLayout):
             instance.id = user_data[0]
 
         # for updating cells instead of adding new ticker, instance has ticker name saved, and I move it here bec my code looks there later
-        if (plus_btn_clicked_id == "top add btn"):
-            sql_handler.make_row(curr_table, instance.id, self.ticker_list)
+        sql_handler.make_row(curr_table, instance.id, plus_btn_clicked_id, self.ticker_list)
 
         # update master_list
-        self.master_list = backend.compare_masterlist(self.master_list, self.trading_days, self.ticker_list, self.tablenames, user_data, user_date, plus_btn_clicked_id, curr_table, instance.id)
+        if (user_date in self.trading_days):
+            self.master_list = backend.compare_masterlist(self.master_list, self.trading_days, self.ticker_list, self.tablenames, user_data, user_date, plus_btn_clicked_id, curr_table, instance.id)
 
-        # update UI
-        self.update_ui(plus_btn_clicked_id)
+            # update UI
+            self.update_ui(plus_btn_clicked_id)
 
 
 
@@ -241,11 +263,12 @@ class Main_Page(BoxLayout):
 
     # when user enters a new ticker to track, this adds 1 more row populated by the ticker and 5 '?' note boxees
     # pm: plus_btn_clicked_id = if top add btn or update btn were pushed, rating_index = for rating, what index (ticker) of master_list to use
-    # pm: highlight_counter = -self.todays_index, since this method is called in a loop, this increases by 9 each loop to mark the day to highlight
     # ex data) [date, cp, % 400 ema, breakout moves, % gain, rating], [data for next day], [...]
-    def make_row(self, ticker, data, plus_btn_clicked_id, rating_index, highlight_counter):
+    def make_row(self, ticker, data, plus_btn_clicked_id, rating_index):
         holder = ["Plot", "+"]
         row_start_index = len(self.btn_list)
+        todays_date = backend.get_todays_date()   # ex) "8/10"
+        marker = "?"
 
         # first make the rating btn
         self.btn_list.append(self.make_btn("", False, [1,0,0,1], "", ))
@@ -259,14 +282,12 @@ class Main_Page(BoxLayout):
 
         # make btns for the whole week (0 is just the ticker, the data is 1-6)
         for i in range(0, 5):
+            if (marker == "-"):
+                for j in range(0, len(data[i])):
+                    data[i][j] = data[i][j].replace("?", marker)
+            
             self.btn_list.append(self.make_btn("", False, [1,0,0,1], ""))
-
-            # highlight all of todays btns
-            # BUG: will get lighter and lighter each refresh because of background_normal, can't find any solutions
-            #if (len(self.btn_list) % (highlight_counter) == 0): 
-            #    self.btn_list[-1].background_normal = ""             # disables background image (grey) so the background color isn't tinted grey
-            #    self.btn_list[-1].background_color = [1,1,0.3,0.9]   # yellow
-
+            
             self.btn_list[-1].ids["ticker"] = ticker
             self.btn_list[-1].ids["date"] = data[i][0] 
             self.btn_list[-1].ids["close_price"] = data[i][1]
@@ -277,16 +298,22 @@ class Main_Page(BoxLayout):
 
             # handle curr_btn text
             self.btn_list[-1].text = self.btn_list[-1].ids["rating"] + "\n"
-            if (data[i][1] != "?"):
+            if (data[i][1] != marker):
                 self.btn_list[-1].text += "$"
             self.btn_list[-1].text += (self.btn_list[-1].ids["close_price"] + "\n" + self.btn_list[-1].ids["breakout_moves"])
 
-        # handle rating_btn and lead ticker_btn
-        self.btn_list[row_start_index + 1].ids["close_price"] = data[-(self.todays_index + 3)][1]
-        self.btn_list[row_start_index + 1].text = ticker + "\n$" + data[-(self.todays_index + 3)][1]
+            # highlight all of todays btns
+            if (self.btn_list[-1].ids["date"] == todays_date):
+                self.btn_list[-1].background_normal = ""             # disables background image (grey) so the background color isn't tinted grey
+                self.btn_list[-1].background_color = [1,1,0.3,0.9]   # yellow
+                marker = "-"
 
-        self.btn_list[row_start_index].ids["rating"] = data[-(self.todays_index + 3)][5]
-        self.btn_list[row_start_index].text = data[-(self.todays_index + 3)][5]
+        # handle rating_btn and lead ticker_btn
+        self.btn_list[row_start_index + 1].ids["close_price"] = data[self.todays_index - 3][1]
+        self.btn_list[row_start_index + 1].text = ticker + "\n$" + data[self.todays_index - 3][1]
+
+        self.btn_list[row_start_index].ids["rating"] = data[self.todays_index - 3][5]
+        self.btn_list[row_start_index].text = data[self.todays_index - 3][5]
 
         # insert the plot and add data btns "plot" then "+"
         for j in range(0, 2):
@@ -323,7 +350,7 @@ class Main_Page(BoxLayout):
         if (self.todays_index == None):
             return
 
-        self.stock_grid.children[self.todays_index].background_color = [1, 1, 0.5, 0.8]   # yellow
+        self.stock_grid.children[-(self.todays_index)].background_color = [1, 1, 0.5, 0.8]   # yellow
             
 
     # called at app start and when user enters new info
@@ -331,12 +358,10 @@ class Main_Page(BoxLayout):
     # calls kivy_code.makerow for each ticker, using master_list as data
     def update_ui(self, plus_btn_clicked_id):
         if (self.ticker_list != []):           # skips everything if the table is empty
-            highlight_counter = -self.todays_index
             self.delete_data()
 
             for i in range(0, len(self.ticker_list)):   # make 1 row at a time
-                self.make_row(self.master_list[i][0], self.master_list[i][6:], plus_btn_clicked_id, i, highlight_counter)
-                highlight_counter += 9
+                self.make_row(self.master_list[i][0], self.master_list[i][6:], plus_btn_clicked_id, i)
 
 
     # called during update_ui() before make_row()
@@ -357,8 +382,8 @@ class Main_Page(BoxLayout):
     # w/o this: after each plot, these vars are populated with all the data that was on the plot
     # > so next time I'd make a plot, it'd be populated with a bunch of data user doesn't want
     def plot_reset_data(self, instance):
-        self.plot_ratings.append(backend.plot_get_ratings(self.master_list, self.ticker_list.index(instance.ids["ticker"])))
-        self.plot_tickers.append(instance.ids["ticker"])
+        self.plot_ratings = [backend.plot_get_ratings(self.master_list, self.ticker_list.index(instance.ids["ticker"]))]
+        self.plot_tickers = [instance.ids["ticker"]]
 
         self.plot_create(instance)
 
@@ -367,10 +392,11 @@ class Main_Page(BoxLayout):
     # modalview -> boxlayout 
     # [0]: boxlayout [0]: scrollview -> gridlayout made of labels and btns
     #                [1]: (legend) gridlayout made of labels
-    # [1]: plot
+    # [1]: boxlayout [0]: plot
+    #                [1]: list of labels showing the dates as x-ticks
     def plot_create(self, instance):
         mainview = ModalView(size_hint = (0.75, 0.75))
-        box = BoxLayout(orientation = "horizontal")
+        box = BoxLayout(orientation = "horizontal", padding = [0,15,15,10])   # left, top, right, bot
 
         # make a the left side
         leftbox = BoxLayout(orientation = "vertical", size_hint_x = 0.3)
@@ -385,7 +411,7 @@ class Main_Page(BoxLayout):
             ticker_grid.add_widget(Button(text = "+", size_hint_x = 0.4))
 
             # if ticker is shown on plot
-            if (self.ticker_list[i] in self.plot_tickers):
+            if ((self.ticker_list[i] in self.plot_tickers) and len(self.plot_tickers) > 0):
                 ticker_grid.children[0].text = 'X'
                 ticker_grid.children[0].background_color = [1,0,0,1]
 
@@ -395,13 +421,22 @@ class Main_Page(BoxLayout):
             else:
                 ticker_grid.children[0].fbind("on_release", self.plot_cancel_ticker, ticker_grid.children[1].text, mainview)
 
+        rightbox = BoxLayout(orientation = "vertical")
+        rightbotgrid = GridLayout(rows = 1, cols = 13, size_hint_y = 0.05)
+
+        rightbotgrid.add_widget(Label(size_hint_x = 1/13))   # make invisible labels for formatting
+        for i in range(1, 10):   # make actual labels
+            rightbotgrid.add_widget(Label(text = self.plot_dates[i], size_hint_x = 1/13))
 
         # combine everything
         scroll.add_widget(ticker_grid)                
         leftbox.add_widget(scroll)
         leftbox.add_widget(self.plot_make_legend())        # the graph doesn't have legend functionality, so make one
+        rightbox.add_widget(backend.make_plot(self.plot_ratings, self.plot_dates, self.plot_tickers, self.plot_colors))
+        rightbox.add_widget(rightbotgrid)
+        rightbox.add_widget(Label(text = "Dates", size_hint_y = 0.05))
         box.add_widget(leftbox)
-        box.add_widget(backend.make_plot(self.plot_ratings, self.plot_tickers, self.plot_colors))
+        box.add_widget(rightbox)
         mainview.add_widget(box)
 
         mainview.open()
@@ -431,7 +466,7 @@ class Main_Page(BoxLayout):
 
 
     # EVENT: user clicked btn to cancel a ticker from the modalview - so erase it
-    # pm: ticker = 'cde', instance = the X btn clicked
+    # pm: ticker = 'cde', instance = X btn clicked
     def plot_cancel_ticker(self, ticker, mainview, instance):
         spot = self.plot_tickers.index(ticker)
         instance.text = "+"
@@ -444,7 +479,7 @@ class Main_Page(BoxLayout):
         self.plot_create(None)   # restart modalview
 
 
-    # pm: ticker = 'cde', instance = the + btn clicked
+    # pm: ticker = 'cde', instance = + btn clicked
     def plot_add_ticker(self, ticker, mainview, instance):
         if (len(self.plot_tickers) == 5):
             return
