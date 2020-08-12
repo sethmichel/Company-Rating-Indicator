@@ -1,10 +1,10 @@
 import mysql.connector 
 
 mydb = mysql.connector.connect(
-    auth_plugin = "mysql_native_password",
-    host = "127.0.0.1",
-    user = "root",
-    passwd = "PhMrlyion97!"
+    auth_plugin = "",
+    host = "",
+    user = "",
+    passwd = ""
 )
 
 mycursor = mydb.cursor(buffered = True)
