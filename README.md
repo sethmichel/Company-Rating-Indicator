@@ -12,3 +12,6 @@ The plot functionality is using the kivy garden/graph module which is very simil
 modules are unofficial user made extentions of kivy)
 
 
+![](https://i.imgur.com/0vMMYdt.jpg)
+![](https://i.imgur.com/W9cSm4o.jpg)
+![](https://i.imgur.com/ZqOGPVj.jpg)
