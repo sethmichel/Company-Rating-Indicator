@@ -1,9 +1,13 @@
-import datetime as dt
 import sql_handler
+import twitter_handler
+
+import datetime as dt
 import yfinance as yf   # get api data
 import pandas as pd     # yfinance returns as panda df
 from math import sin    # plot handling
 from kivy_garden.graph import Graph, MeshLinePlot   # plot handling
+from random import uniform   # making fake ratings
+
 
 
 # if yfinance is called intraday, it'll return a close price of the current price - which is wrong
@@ -36,7 +40,7 @@ def get_close_prices(ticker, date, dateend):
     if (command == True or (time[0] > 20 or (time[0] < 13) or (time[0] < 13 and time[1] < 30) or (time[0] == 20 and time[1] > 20))):
         return str(yf.Ticker(ticker).history(start = date, end = dateend)["Close"][0])
     else:
-        return None
+        return "?"
 
 
 # called from kivy init
@@ -73,13 +77,12 @@ def get_todays_index():
     return day + 3   # mon = 3, fri = 7
 
 
-# return ex) "8/10"
+# return ex) "2020-8-14"
 def get_todays_date():
     today = dt.date.today()
     return str(today.year) + "-" + str(today.month) + "-" + str(today.day)
     
 
-# called from testing
 # converts date for data into the name of the right sql table. (date = 2020-month-day or 2020-month
 def make_table_name(date, tablenames):
     date = date.split("-")
@@ -97,12 +100,11 @@ def call_get_tickers(tablenames):
     ticker_list = []
     for i in range(0, 2):
         table = make_table_name(str(today.year) + "-" + str(int(today.month) - i), tablenames)
-
         sql_handler.check_table_exists(table, tablenames)
-
         add = sql_handler.get_data(table, "", "", "tickers")
 
-        # blank sql tables trigger this
+        # blank sql tables don't trigger this
+        # j has to keep counting, but i has to pause if triggered. this is the best way to do this
         if (add[0] != ""):
             length = len(add)
             i = 0
@@ -122,18 +124,15 @@ def call_get_tickers(tablenames):
 # gets a list of sql data at app start to write to UI
 # pm ex): trading_day = "2020-6-15", ticker = "cde"
 def call_get_data(tablenames, trading_day, ticker):
-    # time frame could go into next month
-    table_to_use = make_table_name(trading_day, tablenames)
-
-    # get the col name
+    table_to_use = make_table_name(trading_day, tablenames)     # time frame could go into next month
     col = sql_handler.updator(int(trading_day.split("-")[2]))
 
     # get the cell data
     data = [trading_day]
+    sql_handler.check_table_exists(table_to_use, tablenames)
     data.extend(sql_handler.get_data(table_to_use, col, ticker, "cell").split("*"))
 
-    # blank cells would trigger this
-    if (data[-1] == ""):
+    if (data[-1] == ""):   # blank cells would trigger this
         del data[-1]
 
     return data   # ex) [ date, cp, % ema, bm, % gain, rating ]
@@ -184,6 +183,7 @@ def get_api_data(data, ticker, trading_days, tablenames):
     stop_flag = ""
     filled_flag = ""
     check_date = dt.date.today() + dt.timedelta(days = 1)
+    
     check_date = str(check_date.year) + '-' + str(check_date.month) + '-' + str(check_date.day)
 
     for i in range(1, 11):
@@ -205,7 +205,7 @@ def get_api_data(data, ticker, trading_days, tablenames):
                 filled_flag = "filled"
 
         # get all missing % gains
-        if (stop_flag != "past today" and data[i][4] == "?" and i > 1):
+        if (stop_flag != "past today" and filled_flag == "filled" and data[i][4] == "?" and i > 1):
             data[i][4] = calc_percent_gain(float(data[i - 1][1]), float(data[i][1]))
             filled_flag = "filled"
         
@@ -216,10 +216,11 @@ def get_api_data(data, ticker, trading_days, tablenames):
             data[1][4] = calc_percent_gain(float(cp_prior), float(data[1][1]))
 
         # calculate missing ratings
-        if (stop_flag != "past today" and data[i][5] == "?" and i > 5):
+        if (stop_flag != "past today" and i > 5 and (data[i][5] == "?" or len(data[i][5]) > 4)):
             data[i][5] = create_rating(data[1:i + 1])
-            if (data[i][5] != "?"):
+            if (len(data[i][5]) > 4):
                 data[i][5] = str(round(float(data[i][5]), 2))
+            if (data[i][5] != "?"):
                 filled_flag = "filled"
 
         # if any data changed, write it to sql (possible 2 things changed so I waited to write this)
@@ -263,6 +264,8 @@ def check_user_date(txtin, trading_days, flag):
         if (len(txtin.text) > 5):
             return "Rejected, invalid date"
         txtin.text = txtin.text.replace("/", "-")   # does nothing if "/" isn't there
+        if (("2020-" + txtin.text) not in trading_days):
+            return "Rejected, date too far back"
         if ("-" not in txtin.text):
             return "Rejected, invalid date format (correct ex: 4-15)"
         splitstr = txtin.text.split("-")
@@ -454,7 +457,8 @@ def create_rating(data):
     if (len(breakout_handler[1]) < 1 or percent_gain_handler[1] < 5 or percent_ema_handler[1] < 5):
         return "?"
     else:
-        return str((breakout_handler[0] + percent_gain_handler[0] + percent_ema_handler[0]) / 3.35)
+        rating = (breakout_handler[0] + percent_gain_handler[0] + percent_ema_handler[0]) / 3.35
+        return str(round(rating, 2))
 
 
 # updates score with prev % ema's - part of calculating rating
@@ -470,11 +474,11 @@ def rating_percent_ema(test_data, handler):
         handler[0] += 2.08
 
     elif (test_data > 1.0 and test_data <= 2.0):
-        handler[0] += 2.5
+        handler[0] += 5.5
     elif (test_data > 2.0 and test_data <= 3.0):
-        handler[0] += 1.25
+        handler[0] += 2.25
     elif (test_data > 3.0 and test_data <= 4.0):
-        handler[0] += 0.41
+        handler[0] += 1.41
     
     return handler 
 
@@ -483,25 +487,25 @@ def rating_percent_ema(test_data, handler):
 def rating_breakout_moves(test_data, handler):
     if (test_data == "fake"):
         handler[1].append("fake")
-        handler[0] += 0.83
+        handler[0] += 2.83
 
     elif (test_data == "small"):
         handler[1].append("small")
-        handler[0] += 1.66
+        handler[0] += 4.66
 
     elif (test_data == "big"):
         handler[1].append("big")
-        handler[0] += 2.50
+        handler[0] += 6.50
 
     # 3 fakes in a row = 2 pts
     if (len(handler[1]) > 2 and handler[1][-1] == "fake" and handler[1][-2] == "fake" and handler[1][-3] == "fake"):
-        handler[0] += 1.00
+        handler[0] += 6.00
     # 2 fakes in row = 1 pt
     elif (len(handler[1]) > 1 and handler[1][-1] == "fake" and handler[1][-2] == "fake"):
-        handler[0] += 0.50
+        handler[0] += 2.50
     # small then fake = 1 pt
     if (len(handler[1]) > 1 and handler[1][-1] == "small" and handler[1][-2] == "fake"):
-        handler[0] += 0.50
+        handler[0] += 2.50
 
     return handler
 
@@ -519,25 +523,25 @@ def rating_percent_gain(test_data, handler):
         handler[0]
 
     elif (test_data > 1.0 and test_data <= 2.0): 
-        handler[0] += 0.25
-    elif (test_data > 2.0 and test_data <= 3.0): 
-        handler[0] += 0.25
-    elif (test_data > 3.0 and test_data <= 4.0): 
-        handler[0] += 0.75
-    elif (test_data > 4.0 and test_data <= 5.0): 
-        handler[0] += 0.75
-    elif (test_data > 5.0 and test_data <= 6.0): 
-        handler[0] += 1.0
-    elif (test_data > 6.0 and test_data <= 7.0): 
-        handler[0] += 1.25
-    elif (test_data > 7.0 and test_data <= 8.0): 
-        handler[0] += 1.5
-    elif (test_data > 8.0 and test_data <= 9.0):
-        handler[0] += 2
-    elif (test_data > 9.0 and test_data <= 10.0): 
         handler[0] += 2.25
+    elif (test_data > 2.0 and test_data <= 3.0): 
+        handler[0] += 3.25
+    elif (test_data > 3.0 and test_data <= 4.0): 
+        handler[0] += 3.75
+    elif (test_data > 4.0 and test_data <= 5.0): 
+        handler[0] += 4.75
+    elif (test_data > 5.0 and test_data <= 6.0): 
+        handler[0] += 5.0
+    elif (test_data > 6.0 and test_data <= 7.0): 
+        handler[0] += 5.25
+    elif (test_data > 7.0 and test_data <= 8.0): 
+        handler[0] += 5.5
+    elif (test_data > 8.0 and test_data <= 9.0):
+        handler[0] += 6
+    elif (test_data > 9.0 and test_data <= 10.0): 
+        handler[0] += 6.25
 
-    else: handler[0] += 2.5
+    else: handler[0] += 1.5
 
     return handler
 
@@ -585,22 +589,40 @@ def plot_make_dates():
     date = dt.date.today()        # todays date
     week_index = date.weekday()
 
-    if (week_index == 5):
-        date -= dt.timedelta(days = 1)
+    if (week_index > 4):                       # weekends are 5 or 6
+        date -= dt.timedelta(week_index - 4)   # ex) sunday = 6. 6 - 4 = 2. 6 - 2 = fri
 
     # go backward from today (or fri if it's a weekend)
     for i in range(0, 10):
         # change weekends to fri
         if (date.weekday() == 6):
-            date -= dt.timedelta(days = 2)
+            date -= dt.timedelta(2)
 
         date_list.insert(0, str(date.month) + "/" + str(date.day))
 
-        date -= dt.timedelta(days = 1)
+        date -= dt.timedelta(1)
 
     return date_list
         
 
+# descides what to send to twitter
+# at this point I know I haven't posted this session, but idk about the last 24 hours
+def twitter_communicator(master_list):
+    twitter_tickers = []
+    week_index = dt.date.today().weekday()   # sun = 6, mon = 0
+
+    if (week_index > 4):   # if it's sat or sun
+        week_index = 4     # use fridays data
+
+    # append ticker if it's >= a 9.0 rating
+    for i in range(0, len(master_list)):
+        # dim's are the ticker, the date, rating
+        if (master_list[i][week_index + 6][5] != "?" and float(master_list[i][week_index + 6][5]) >= 9.0):
+            twitter_tickers.append(([master_list[i][0]], master_list[i][week_index + 6][5]))   # list of tuples
+
+    twitter_handler.initilize_api(twitter_tickers)
+
+    
 
 
 

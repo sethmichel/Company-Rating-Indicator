@@ -9,7 +9,6 @@ mydb = mysql.connector.connect(
 
 mycursor = mydb.cursor(buffered = True)
 
-
 # create db only if one doens't exist
 def connect_to_db():
     mycursor.execute("CREATE DATABASE IF NOT EXISTS stockdb")
@@ -49,15 +48,14 @@ def make_row(table, ticker, plus_btn_clicked_id, ticker_list):
 # returns formated list of all tablenames in db
 def get_tables():
     mycursor.execute("SHOW TABLES")
-    tables = mycursor.fetchall()
-    for i in range(0, len(tables)):
-        tables[i] = str(tables[i])
-        tables[i] = tables[i].replace("'", "")
-        tables[i] = tables[i].replace("(", "")
-        tables[i] = tables[i].replace(")", "")
-        tables[i] = tables[i].replace(",", "")
+    tables = str(mycursor.fetchall())   # curr list of tuples
+    
+    tables = tables.strip("[']")
+    tables = tables.replace("('", "")
+    tables = tables.replace("',)", "")
+    tables = tables.replace(" ", "")
 
-    return tables
+    return tables.split(",")
 
 
 # returns which column I'm using since the col name can't be a varible and I can't do it any other way
@@ -88,7 +86,6 @@ def get_data(table, col, ticker, flag):
     # gets a single sql cell
     if (flag == "cell"):
         mycursor.execute("SELECT " + col + " FROM " + table + " WHERE Categories = '" + ticker + "'")
-    # gets the tickers
     else:
         mycursor.execute("SELECT Categories FROM " + table)
 
@@ -99,8 +96,8 @@ def get_data(table, col, ticker, flag):
         return ''
 
     data = data[3:-3]                   # drop the "[('" and ",)]"
-    data = data.replace("'", "")        # drop all '
-    data = data.replace(" ", "")        # drop all spaces
+    data = data.replace("'", "")
+    data = data.replace(" ", "")
 
     if (flag == "tickers"):
         data = data.replace(",)", "")    
@@ -108,47 +105,4 @@ def get_data(table, col, ticker, flag):
         return data.split(",")
 
     return data
-
-
-    
-
-
-
-# testing
-def emergency_correct_1_cell():
-    connect_to_db()
-    
-    # ex data) [ cp, % 400 ema, breakout moves, % gain, rating ]
-    sql = "UPDATE augest2020 SET Tenth = %s WHERE Categories = 'cde'"
-    data = ['?*?*?*?*?']
-    mycursor.execute(sql, data)
-    '''
-    sql = "UPDATE july2020 SET TwentyEighth = %s WHERE Categories = 'cde'"
-    data = ['8.24*3.5*big*8.86*?']
-    mycursor.execute(sql, data)
-
-    sql = "UPDATE july2020 SET TwentyNinth = %s WHERE Categories = 'cde'"
-    data = ['8.43*3.2*?*1.9*?']
-    mycursor.execute(sql, data)
-
-    sql = "UPDATE july2020 SET Thirtieth = %s WHERE Categories = 'cde'"
-    data = ['8.43*3.4*small*1.9*?']
-    mycursor.execute(sql, data)
-    
-    sql = "UPDATE july2020 SET ThirtyFirst = %s WHERE Categories = 'cde'"
-    data = ['7.93*0.5*?*-6.31*?']
-    mycursor.execute(sql, data)
-    
-    '''
-    mydb.commit()
-    print("pause")
-
-    #write_to_sql("July2020", "10", ['cde', '15.6', '3.2', None], "top_add_btn")
-    #sql_to_UI("june2020")
-    #update_db("june2020", 2, [("Ticker","aal"), ("Close_Price","22.30"), ("Percent_From_400_ema","1.2"), ("Breakout_Moves","small,big,small")], "aal")
-    #update_db("june2020", 2, [("Ticker","cde"), ("Close_Price","4.15"), ("Percent_From_400_ema","3.5"),("Breakout_Moves","fake","small")], "cde")
-    #update_db("june2020", 2, [("Breakout_Moves","fake","small")], "cde")
-
-#emergency_correct_1_cell()
-
 

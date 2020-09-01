@@ -1,14 +1,12 @@
-# If viewing on github, add sql connection info like username and password 
-# to the sql_handler.py file
-
-# sql line 34
+# If viewing on github
+# add sql connection info in spq_handler.py (mysql.connector.connect())
+# add twitter api keys and access tokens in twitter_handler.py
 
 
 from kivy.app import App
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
-from kivy.uix.widget import Widget
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.boxlayout import BoxLayout
@@ -34,14 +32,15 @@ class Main_Page(BoxLayout):
         self.master_list = backend.get_all_data(self.tablenames, self.ticker_list, self.trading_days)
         self.todays_index = backend.get_todays_index()                 # day of the week
         self.plot_tickers = []                                         # tickers to show on the plot
-        self.plot_colors = [[1,0,0,1], [1,1,0,1], [1,0,1,1], [0.5,.75,.9,1], [0,1,0.3,1]]   # red, yellow, purple, light blue, green | line colors for plot
+        self.plot_colors = [[1,1,0,1], [1,0,0,1], [1,0,1,1], [0.5,.75,.9,1], [0,1,0.3,1]]   # red, yellow, purple, light blue, green | line colors for plot
         self.plot_ratings = []                                         # holds ratings for the plot (2d list)
         self.plot_dates = backend.plot_make_dates()                    # x-axis of plot, 10 most recent trading dates
+        self.twitter_blocker = False                                   # blocks twitter code is I've posted this session
 
         # ---------------------------------------------------------------------------------
 
         # UI things
-        self.orientation = 'vertical'     # rows not cols
+        self.orientation = 'vertical'   # rows not cols
                 
         # this can't a method since I want access to stock_grid later and don't want to try navigating through 2 layers of children for it
         scroll = ScrollView(do_scroll_x = False, do_scroll_y = True)              # a scroll view will contain the stock gridlayout
@@ -102,11 +101,11 @@ class Main_Page(BoxLayout):
 
 
     # EVENT: user entered a ticker to search
-    # if ticker doenst' exist: do a popup saying so
+    # if ticker doesn't exist: do a popup saying so
     # else, move the tickers row to the first in the table / also that to master_list
-    # highlight it for 1 second
     def on_search_enter(self, instance):
-        ticker = instance.parent.children[2].text
+        ticker = instance.parent.children[3].text
+        instance.parent.children[3].text = ""
         if (ticker not in self.ticker_list):
             self.create_popup("Rejected: not a current ticker")
             return
@@ -172,7 +171,7 @@ class Main_Page(BoxLayout):
         txtin = TextInput(hint_text = "ex) 4-15")
         yest_btn = Button(text = "Yesterday")
         tod_btn = Button(text = "Today")
-        backend.kivy_btn_disabler(yest_btn, tod_btn)   # testing, do the btns keep the changes?
+        backend.kivy_btn_disabler(yest_btn, tod_btn)
 
         enter_btn = Button(text = "Enter", disabled = True)
 
@@ -204,8 +203,8 @@ class Main_Page(BoxLayout):
         view.add_widget(box)
 
         view.open()
-    
-    
+
+
     # send the new data to sql
     # check date and data are valid
     # pm: plus_btn_clicked_id = update ticker btn or other, instance = model view enter btn
@@ -239,8 +238,6 @@ class Main_Page(BoxLayout):
         # update master_list
         if (user_date in self.trading_days):
             self.master_list = backend.compare_masterlist(self.master_list, self.trading_days, self.ticker_list, self.tablenames, user_data, user_date, plus_btn_clicked_id, curr_table, instance.id)
-
-            # update UI
             self.update_ui(plus_btn_clicked_id)
 
 
@@ -261,13 +258,13 @@ class Main_Page(BoxLayout):
                       disabled = turn_on)
 
 
-    # when user enters a new ticker to track, this adds 1 more row populated by the ticker and 5 '?' note boxees
+    # when user enters a new ticker to track, this adds 1 more row
     # pm: plus_btn_clicked_id = if top add btn or update btn were pushed, rating_index = for rating, what index (ticker) of master_list to use
     # ex data) [date, cp, % 400 ema, breakout moves, % gain, rating], [data for next day], [...]
     def make_row(self, ticker, data, plus_btn_clicked_id, rating_index):
         holder = ["Plot", "+"]
         row_start_index = len(self.btn_list)
-        todays_date = backend.get_todays_date()   # ex) "8/10"
+        todays_date = backend.get_todays_date()   # ex) "2020-8-14"
         marker = "?"
 
         # first make the rating btn
@@ -289,7 +286,7 @@ class Main_Page(BoxLayout):
             self.btn_list.append(self.make_btn("", False, [1,0,0,1], ""))
             
             self.btn_list[-1].ids["ticker"] = ticker
-            self.btn_list[-1].ids["date"] = data[i][0] 
+            self.btn_list[-1].ids["date"] = data[i][0]
             self.btn_list[-1].ids["close_price"] = data[i][1]
             self.btn_list[-1].ids["percent_400_ema"] = data[i][2]
             self.btn_list[-1].ids["breakout_moves"] = data[i][3]
@@ -304,8 +301,8 @@ class Main_Page(BoxLayout):
 
             # highlight all of todays btns
             if (self.btn_list[-1].ids["date"] == todays_date):
-                self.btn_list[-1].background_normal = ""             # disables background image (grey) so the background color isn't tinted grey
-                self.btn_list[-1].background_color = [1,1,0.3,0.9]   # yellow
+                self.btn_list[-1].background_normal = ""               # disables background image (grey) so the background color isn't tinted grey
+                self.btn_list[-1].background_color = [1,1,0,0.74]   # yellow
                 marker = "-"
 
         # handle rating_btn and lead ticker_btn
@@ -350,7 +347,7 @@ class Main_Page(BoxLayout):
         if (self.todays_index == None):
             return
 
-        self.stock_grid.children[-(self.todays_index)].background_color = [1, 1, 0.5, 0.8]   # yellow
+        self.stock_grid.children[-(self.todays_index)].background_color = [1,1,0,0.74]   # yellow
             
 
     # called at app start and when user enters new info
@@ -362,6 +359,10 @@ class Main_Page(BoxLayout):
 
             for i in range(0, len(self.ticker_list)):   # make 1 row at a time
                 self.make_row(self.master_list[i][0], self.master_list[i][6:], plus_btn_clicked_id, i)
+
+            if (self.twitter_blocker == False):
+                backend.twitter_communicator(self.master_list)
+                self.twitter_blocker = True
 
 
     # called during update_ui() before make_row()
